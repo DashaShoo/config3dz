@@ -7,29 +7,10 @@ class ConfigParser:
     def __init__(self):
         self.constants = {}
 
-    def parse(self, line):
-        # Удаление однострочных комментариев
-        line = re.sub(r'\|\|.*', '', line)
-        return line.strip()
-
-    def parse_multiline_comments(self, lines):
-        in_comment = False
-        cleaned_lines = []
-
-        for line in lines:
-            if '{-' in line:
-                in_comment = True
-                line = line.split('{-', 1)[0]
-            if '-}' in line:
-                in_comment = False
-                line = line.split('-}', 1)[1]
-            if not in_comment and line.strip():
-                cleaned_lines.append(line.strip())
-
-        return cleaned_lines
-
     def evaluate(self, expression):
-        # Обработка чисел и строк
+        # Удаление пробелов и обработка чисел и строк
+        expression = expression.replace(' ', '')
+
         if expression.isdigit():
             return int(expression)
         if expression.startswith("'") and expression.endswith("'"):
@@ -38,13 +19,18 @@ class ConfigParser:
         # Обработка массивов
         array_match = re.match(r'list\((.*)\)', expression)
         if array_match:
-            values = [self.evaluate(v.strip()) for v in array_match.group(1).split(',')]
+            inner_expressions = self._split_expressions(array_match.group(1))
+            values = [self.evaluate(inner_expr) for inner_expr in inner_expressions]
             return values
 
-        # Поддержка выражений с несколькими операциями
+        # Поддержка вложенных выражений
+        if expression.startswith('(') and expression.endswith(')'):
+            inner_expression = expression[1:-1]
+            return self.evaluate(inner_expression)
+
+        # Поддержка операций +, -, mod()
         expr_with_operations = re.split(r'(\s*[\+\-\*\/\%]\s*)', expression)
 
-        # Вычисление выражения с поддержкой операций +, -, mod()
         result = None
         current_op = None
 
@@ -57,7 +43,7 @@ class ConfigParser:
                 value = int(part)
             elif part.startswith('?'):  # Константа
                 const_name = part[1:]
-                value = self.constants.get(const_name, None)
+                value = self.constants.get(const_name)
                 if value is None:
                     raise SyntaxError(f"Константа '{const_name}' не определена.")
             elif part.startswith('mod(') and part.endswith(')'):  # Функция mod()
@@ -81,8 +67,29 @@ class ConfigParser:
                 elif current_op == '-':
                     result -= value
 
-        return result
+        return result  # Возвращаем результат, если он был вычислен
 
+    def _split_expressions(self, expressions):
+        """Разделяет выражения внутри списка по запятой, учитывая вложенные списки."""
+        results = []
+        current_expr = []
+        depth = 0
+
+        for char in expressions:
+            if char == ',' and depth == 0:
+                results.append(''.join(current_expr).strip())
+                current_expr = []
+            else:
+                current_expr.append(char)
+                if char == 'list(':
+                    depth += 1
+                elif char == ')':
+                    depth -= 1
+
+        if current_expr:
+            results.append(''.join(current_expr).strip())
+
+        return results
 
 class XMLGenerator:
     def __init__(self):
